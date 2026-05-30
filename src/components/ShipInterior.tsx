@@ -147,30 +147,15 @@ export const ShipInterior: React.FC = () => {
     return { min: 120, max: 1080 };
   };
 
-  // ─── KEYBOARD HANDLERS ──────────────────────────────────────────────
-
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (state.activeTerminal) return; // ignore controls when terminal is open
-
-    const key = e.key.toLowerCase();
-    keysRef.current.add(key);
-
-    if (key === 'e' || key === 'enter') {
-      if (nearTerminalRef.current) {
-        audioSynth.playChirpSound();
-        setActiveTerminal(nearTerminalRef.current);
-      }
-    }
-  }, [state.activeTerminal, setActiveTerminal]);
-
-  const handleKeyUp = useCallback((e: KeyboardEvent) => {
-    keysRef.current.delete(e.key.toLowerCase());
-  }, []);
-
   // ─── CANVAS CLICK HANDLER ──────────────────────────────────────────
 
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (state.activeTerminal) return;
+
+    // Blur active elements like text inputs to regain keyboard focus instantly
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
 
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -803,18 +788,39 @@ export const ShipInterior: React.FC = () => {
       animFrameId.current = requestAnimationFrame(run);
     };
 
-    animFrameId.current = requestAnimationFrame(run);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (state.activeTerminal) return;
+      const key = e.key.toLowerCase();
+      keysRef.current.add(key);
 
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
+      if (key === 'e' || key === 'enter') {
+        if (nearTerminalRef.current) {
+          audioSynth.playChirpSound();
+          setActiveTerminal(nearTerminalRef.current);
+        }
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      keysRef.current.delete(e.key.toLowerCase());
+    };
+
+    const onBlur = () => {
+      keysRef.current.clear();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
 
     return () => {
       cancelAnimationFrame(animFrameId.current);
       window.removeEventListener('resize', resize);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
     };
-  }, [state.activeTerminal, deck, isClimbing, handleKeyDown, handleKeyUp]);
+  }, [state.activeTerminal, deck, isClimbing, setActiveTerminal]);
 
   // ─── RENDER DOM ─────────────────────────────────────────────────────
 
