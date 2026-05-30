@@ -140,6 +140,18 @@ export const ShipInterior: React.FC = () => {
   const nearTerminalRef = useRef<string | null>(null);
   const animFrameId = useRef(0);
 
+  // Refs to track state values inside animation loop without causing re-mount
+  const activeTerminalRef = useRef<string | null>(state.activeTerminal);
+  const deckRef = useRef<1 | 2 | 3>(deck);
+  const isClimbingRef = useRef(isClimbing);
+  const setActiveTerminalRef = useRef(setActiveTerminal);
+
+  // Sync refs with state/props
+  activeTerminalRef.current = state.activeTerminal;
+  deckRef.current = deck;
+  isClimbingRef.current = isClimbing;
+  setActiveTerminalRef.current = setActiveTerminal;
+
   // Get current horizontal bounds
   const getDeckBounds = (d: 1 | 2 | 3) => {
     if (d === 3) return { min: 270, max: 930 };
@@ -150,7 +162,7 @@ export const ShipInterior: React.FC = () => {
   // ─── CANVAS CLICK HANDLER ──────────────────────────────────────────
 
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (state.activeTerminal) return;
+    if (activeTerminalRef.current) return;
 
     // Blur active elements like text inputs to regain keyboard focus instantly
     if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
@@ -168,18 +180,18 @@ export const ShipInterior: React.FC = () => {
 
     // Check if clicked near a terminal
     for (const room of ROOMS) {
-      if (room.deck !== deck) continue;
+      if (room.deck !== deckRef.current) continue;
       const tX = room.terminalX;
       const tY = playerYRef.current - 45;
       if (Math.abs(clickX - tX) < 40 && Math.abs(clickY - tY) < 50) {
         if (Math.abs(playerXRef.current - tX) < TERMINAL_INTERACT_RANGE) {
           audioSynth.playChirpSound();
-          setActiveTerminal(room.terminalId);
+          setActiveTerminalRef.current(room.terminalId);
           return;
         }
       }
     }
-  }, [state.activeTerminal, deck, setActiveTerminal]);
+  }, []);
 
   // ─── DRAWING FUNCTIONS ──────────────────────────────────────────────
 
@@ -599,24 +611,9 @@ export const ShipInterior: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Rescale Dpr Helper based on parent dimensions to prevent squishing
-    const resize = () => {
-      const parent = canvas.parentElement;
-      if (!parent) return;
-      const w = parent.clientWidth;
-      const h = parent.clientHeight;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-      ctx.scale(dpr, dpr);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
     const run = () => {
-      if (state.activeTerminal) {
+      // Read from refs instead of closed-over state values
+      if (activeTerminalRef.current) {
         animFrameId.current = requestAnimationFrame(run);
         return;
       }
@@ -636,17 +633,31 @@ export const ShipInterior: React.FC = () => {
         return;
       }
 
+      const dpr = window.devicePixelRatio || 1;
+      const expectedWidth = Math.floor(w * dpr);
+      const expectedHeight = Math.floor(h * dpr);
+
+      // Dynamically resize canvas drawing buffer if parent size changes
+      if (canvas.width !== expectedWidth || canvas.height !== expectedHeight) {
+        canvas.width = expectedWidth;
+        canvas.height = expectedHeight;
+      }
+
       const scaleFactor = Math.min(w / CANVAS_WIDTH, h / CANVAS_HEIGHT);
 
       frameRef.current++;
       const f = frameRef.current;
+
+      // Read current values from refs
+      const currentDeck = deckRef.current;
+      const currentIsClimbing = isClimbingRef.current;
 
       // ─── CLIMBING & MOVEMENT LOGIC ────────────────────────────────
 
       const keys = keysRef.current;
       let moving = false;
 
-      if (isClimbing) {
+      if (currentIsClimbing) {
         walkFrameRef.current++;
         const targetY = climbTargetYRef.current;
         const diff = targetY - playerYRef.current;
@@ -659,7 +670,7 @@ export const ShipInterior: React.FC = () => {
           playerYRef.current += Math.sign(diff) * CLIMB_SPEED;
         }
       } else {
-        const bounds = getDeckBounds(deck);
+        const bounds = getDeckBounds(currentDeck);
 
         // Horizontal movement
         if (keys.has('a') || keys.has('arrowleft')) {
@@ -683,14 +694,14 @@ export const ShipInterior: React.FC = () => {
           
           if (isNearX) {
             // Climb Up
-            if (deck === ladder.fromDeck && (keys.has('w') || keys.has('arrowup'))) {
+            if (currentDeck === ladder.fromDeck && (keys.has('w') || keys.has('arrowup'))) {
               setIsClimbing(true);
               climbTargetYRef.current = ladder.toY;
               climbNextDeckRef.current = ladder.toDeck;
               audioSynth.playUnlockSound();
             }
             // Climb Down
-            if (deck === ladder.toDeck && (keys.has('s') || keys.has('arrowdown'))) {
+            if (currentDeck === ladder.toDeck && (keys.has('s') || keys.has('arrowdown'))) {
               setIsClimbing(true);
               climbTargetYRef.current = ladder.fromY;
               climbNextDeckRef.current = ladder.fromDeck;
@@ -704,7 +715,7 @@ export const ShipInterior: React.FC = () => {
 
       let near: string | null = null;
       for (const room of ROOMS) {
-        if (room.deck === deck && !isClimbing) {
+        if (room.deck === currentDeck && !currentIsClimbing) {
           if (Math.abs(playerXRef.current - room.terminalX) < TERMINAL_INTERACT_RANGE) {
             near = room.terminalId;
             break;
@@ -718,7 +729,6 @@ export const ShipInterior: React.FC = () => {
 
       // ─── RENDERING ───────────────────────────────────────────────────
 
-      const dpr = window.devicePixelRatio || 1;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
@@ -764,7 +774,7 @@ export const ShipInterior: React.FC = () => {
         walkFrameRef.current,
         moving,
         facingRightRef.current,
-        isClimbing
+        currentIsClimbing
       );
 
       // 10. CRT dark vignette overlay
@@ -789,14 +799,14 @@ export const ShipInterior: React.FC = () => {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (state.activeTerminal) return;
+      if (activeTerminalRef.current) return;
       const key = e.key.toLowerCase();
       keysRef.current.add(key);
 
       if (key === 'e' || key === 'enter') {
         if (nearTerminalRef.current) {
           audioSynth.playChirpSound();
-          setActiveTerminal(nearTerminalRef.current);
+          setActiveTerminalRef.current(nearTerminalRef.current);
         }
       }
     };
@@ -813,19 +823,21 @@ export const ShipInterior: React.FC = () => {
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
 
+    animFrameId.current = requestAnimationFrame(run);
+
     return () => {
       cancelAnimationFrame(animFrameId.current);
-      window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [state.activeTerminal, deck, isClimbing, setActiveTerminal]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);  // Empty deps — runs once, uses refs for dynamic values
 
   // ─── RENDER DOM ─────────────────────────────────────────────────────
 
   return (
-    <div className="ship-viewport">
+    <div className="ship-viewport" style={{ width: '100%', height: '100%', position: 'relative' }}>
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}

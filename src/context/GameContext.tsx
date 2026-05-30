@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import type { GameState, ResourceType, ResourceMarket, DroneData, RefineryData, UpgradeData, Achievement, ExplorationNode, MarketContract, AutoTradeConfig, MailMessage, ActivePriceModification, TravelLocation } from '../types';
 import { audioSynth } from '../utils/audioSynth';
+import Paho from 'paho-mqtt';
 
 const SAVE_KEY = 'void_horizon_save_v1';
 
@@ -241,17 +242,29 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   stateRef.current = state;
 
   const channelRef = useRef<BroadcastChannel | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const mqttClientRef = useRef<Paho.Client | null>(null);
+  const mqttConnectedRef = useRef(false);
+  const mqttClientIdRef = useRef('vh_' + Math.random().toString(36).substr(2, 8));
 
-  // Helper to send messages over both Local BroadcastChannel and remote WebSockets
+  // Helper to send messages over both Local BroadcastChannel and remote MQTT
   const broadcastMessage = useCallback((msg: { type: string; roomCode: string; payload: any }) => {
     // 1. Local tabs
     if (channelRef.current) {
       channelRef.current.postMessage(msg);
     }
-    // 2. Remote players (WebSockets)
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg));
+    // 2. Remote players via MQTT
+    if (mqttClientRef.current && mqttConnectedRef.current) {
+      const topic = `void_horizon/rooms/${msg.roomCode}/events`;
+      const mqttMsg = new Paho.Message(JSON.stringify({
+        ...msg,
+        _senderId: mqttClientIdRef.current  // Prevent echo
+      }));
+      mqttMsg.destinationName = topic;
+      try {
+        mqttClientRef.current.send(mqttMsg);
+      } catch (err) {
+        console.warn('MQTT send failed:', err);
+      }
     }
   }, []);
 
@@ -484,72 +497,118 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [handleIncomingMessage]);
 
-  // 2. Remote WebSocket Signaling Client Setup (Runs on Render and syncs cross-device!)
+  // 2. MQTT Broker Signaling (HiveMQ free public broker — works cross-device on static hosting!)
   useEffect(() => {
-    const mp = state.multiplayer;
+    const mp = stateRef.current.multiplayer;
     if (!mp.active || !mp.roomCode) {
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
+      // Disconnect existing client if lobby is left
+      if (mqttClientRef.current && mqttConnectedRef.current) {
+        try {
+          mqttClientRef.current.disconnect();
+        } catch (_) { /* ignore */ }
+        mqttClientRef.current = null;
+        mqttConnectedRef.current = false;
       }
       return;
     }
 
-    const room = mp.roomCode.toLowerCase();
-    
-    // Resolve dynamic self-hosted WebSocket URL (works locally and deployed)
-    let wsUrl;
-    if (typeof window !== 'undefined') {
-      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        wsUrl = 'ws://localhost:10000';
-      } else {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsUrl = `${protocol}//${window.location.host}`;
-      }
-    } else {
-      wsUrl = 'ws://localhost:10000';
-    }
+    const roomCode = mp.roomCode;
+    const topic = `void_horizon/rooms/${roomCode}/events`;
+    const clientId = mqttClientIdRef.current;
 
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    // Create Paho MQTT client pointing to HiveMQ's free public secure WebSocket broker
+    const client = new Paho.Client(
+      'broker.hivemq.com',  // Host
+      8884,                 // Port (secure WebSockets / wss)
+      '/mqtt',              // Path
+      clientId              // Unique Client ID
+    );
 
-    ws.onopen = () => {
-      console.log(`Connected to self-hosted Competitive Lobby ${mp.roomCode} backend!`);
-      const myId = stateRef.current.multiplayer.players[0]?.id || 'player_host';
-      const mySelf = {
-        id: myId,
-        name: stateRef.current.multiplayer.playerName,
-        isBot: false,
-        color: stateRef.current.multiplayer.players[0]?.color || '#00f2fe',
-        credits: stateRef.current.credits,
-        dronesCount: Object.values(stateRef.current.drones).reduce((acc, d) => acc + d.count, 0),
-        currentLocation: stateRef.current.currentLocation || 'core'
-      };
+    mqttClientRef.current = client;
 
-      // Broadcast join to all remote peers
-      ws.send(JSON.stringify({
-        type: 'PLAYER_JOIN',
-        roomCode: mp.roomCode,
-        payload: mySelf
-      }));
+    client.onConnectionLost = (responseObject) => {
+      mqttConnectedRef.current = false;
+      console.log('MQTT disconnected:', responseObject.errorMessage);
+      // Auto-reconnect after 3 seconds if still in a lobby
+      setTimeout(() => {
+        const currentMp = stateRef.current.multiplayer;
+        if (currentMp.active && currentMp.roomCode === roomCode && !mqttConnectedRef.current) {
+          try {
+            client.connect({
+              onSuccess: onConnect,
+              onFailure: onFailure,
+              useSSL: true,
+              timeout: 10,
+              keepAliveInterval: 30
+            });
+          } catch (_) { /* ignore */ }
+        }
+      }, 3000);
     };
 
-    ws.onmessage = (event) => {
+    client.onMessageArrived = (message: Paho.Message) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(message.payloadString);
+        // Ignore our own messages (echo prevention)
+        if (data._senderId === clientId) return;
         handleIncomingMessage(data);
       } catch (err) {
-        console.error("Websocket parsing error:", err);
+        console.error('MQTT message parse error:', err);
       }
     };
 
-    ws.onclose = () => {
-      console.log("Disconnected from Deepspace Competitive Lobby relay.");
+    const onConnect = () => {
+      mqttConnectedRef.current = true;
+      console.log(`Connected to MQTT broker for room ${roomCode}!`);
+      
+      // Subscribe to the room topic
+      client.subscribe(topic);
+
+      // Announce our join to all remote peers
+      const s = stateRef.current;
+      const myId = s.multiplayer.players[0]?.id || 'player_host';
+      const mySelf = {
+        id: myId,
+        name: s.multiplayer.playerName,
+        isBot: false,
+        color: s.multiplayer.players[0]?.color || '#00f2fe',
+        credits: s.credits,
+        dronesCount: Object.values(s.drones).reduce((acc, d) => acc + d.count, 0),
+        currentLocation: s.currentLocation || 'core'
+      };
+
+      const joinMsg = new Paho.Message(JSON.stringify({
+        type: 'PLAYER_JOIN',
+        roomCode,
+        payload: mySelf,
+        _senderId: clientId
+      }));
+      joinMsg.destinationName = topic;
+      client.send(joinMsg);
     };
 
+    const onFailure = (err: any) => {
+      console.error('MQTT connection failed:', err);
+      mqttConnectedRef.current = false;
+    };
+
+    client.connect({
+      onSuccess: onConnect,
+      onFailure: onFailure,
+      useSSL: true,
+      timeout: 10,
+      keepAliveInterval: 30
+    });
+
     return () => {
-      ws.close();
-      wsRef.current = null;
+      try {
+        if (mqttConnectedRef.current) {
+          client.unsubscribe(topic);
+          client.disconnect();
+        }
+      } catch (_) { /* ignore */ }
+      mqttClientRef.current = null;
+      mqttConnectedRef.current = false;
     };
   }, [state.multiplayer.active, state.multiplayer.roomCode, handleIncomingMessage]);
 
@@ -1891,17 +1950,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }));
 
-          if (channelRef.current) {
-            channelRef.current.postMessage({
-              type: 'CHAT_MSG',
-              roomCode: s.multiplayer.roomCode,
-              payload: {
-                sender: s.multiplayer.playerName,
-                text,
-                color: myPlayer.color
-              }
-            });
-          }
+          // Broadcast to both local BroadcastChannel AND remote MQTT
+          broadcastMessage({
+            type: 'CHAT_MSG',
+            roomCode: s.multiplayer.roomCode,
+            payload: {
+              sender: s.multiplayer.playerName,
+              text,
+              color: myPlayer.color
+            }
+          });
         }
       }}
     >
