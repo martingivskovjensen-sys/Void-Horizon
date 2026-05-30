@@ -445,6 +445,25 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         break;
       }
+
+      case 'PLAYER_LEAVE': {
+        setState(prev => {
+          const logEntry = {
+            id: 'log_' + Date.now() + Math.random().toString(36).substr(2, 4),
+            text: `⚠️ Captain ${payload.name} has left the competitive grid.`,
+            time: Date.now()
+          };
+          return {
+            ...prev,
+            multiplayer: {
+              ...prev.multiplayer,
+              players: prev.multiplayer.players.filter(p => p.id !== payload.id),
+              activityLog: [logEntry, ...prev.multiplayer.activityLog].slice(0, 50)
+            }
+          };
+        });
+        break;
+      }
     }
   }, [broadcastMessage]);
 
@@ -476,13 +495,25 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const room = mp.roomCode.toLowerCase();
-    // Connect to a free high-availability public WebSocket pubsub service
-    const wsUrl = `wss://demo.piesocket.com/v3/void_horizon_${room}?api_key=VCXCE9YFmchupQC74776476563243&notify_self=0`;
+    
+    // Resolve dynamic self-hosted WebSocket URL (works locally and deployed)
+    let wsUrl;
+    if (typeof window !== 'undefined') {
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        wsUrl = 'ws://localhost:10000';
+      } else {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = `${protocol}//${window.location.host}`;
+      }
+    } else {
+      wsUrl = 'ws://localhost:10000';
+    }
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log(`Connected to Deepspace Competitive Lobby ${mp.roomCode} relay!`);
+      console.log(`Connected to self-hosted Competitive Lobby ${mp.roomCode} backend!`);
       const myId = stateRef.current.multiplayer.players[0]?.id || 'player_host';
       const mySelf = {
         id: myId,
