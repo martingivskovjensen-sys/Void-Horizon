@@ -124,6 +124,7 @@ export const ShipInterior: React.FC = () => {
   // Robot State
   const [deck, setDeck] = useState<1 | 2 | 3>(1);
   const [isClimbing, setIsClimbing] = useState(false);
+  const [loopError, setLoopError] = useState<string | null>(null);
 
   const playerXRef = useRef(300);
   const playerYRef = useRef(DECK_1_Y);
@@ -612,26 +613,27 @@ export const ShipInterior: React.FC = () => {
     if (!ctx) return;
 
     const run = () => {
-      // Read from refs instead of closed-over state values
-      if (activeTerminalRef.current) {
-        animFrameId.current = requestAnimationFrame(run);
-        return;
-      }
+      try {
+        // Read from refs instead of closed-over state values
+        if (activeTerminalRef.current) {
+          animFrameId.current = requestAnimationFrame(run);
+          return;
+        }
 
-      const parent = canvas.parentElement;
-      if (!parent) {
-        animFrameId.current = requestAnimationFrame(run);
-        return;
-      }
+        const parent = canvas.parentElement;
+        if (!parent) {
+          animFrameId.current = requestAnimationFrame(run);
+          return;
+        }
 
-      const w = parent.clientWidth;
-      const h = parent.clientHeight;
+        const w = parent.clientWidth;
+        const h = parent.clientHeight;
 
-      // Skip frame if not laid out yet to prevent canvas scaling to 0
-      if (w === 0 || h === 0) {
-        animFrameId.current = requestAnimationFrame(run);
-        return;
-      }
+        // Skip frame if not laid out yet to prevent canvas scaling to 0
+        if (w === 0 || h === 0) {
+          animFrameId.current = requestAnimationFrame(run);
+          return;
+        }
 
       const dpr = window.devicePixelRatio || 1;
       const expectedWidth = Math.floor(w * dpr);
@@ -796,6 +798,10 @@ export const ShipInterior: React.FC = () => {
       ctx.restore();
 
       animFrameId.current = requestAnimationFrame(run);
+      } catch (err: any) {
+        console.error("Simulation loop error:", err);
+        setLoopError(err.stack || err.message || String(err));
+      }
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -835,6 +841,45 @@ export const ShipInterior: React.FC = () => {
   }, []);  // Empty deps — runs once, uses refs for dynamic values
 
   // ─── RENDER DOM ─────────────────────────────────────────────────────
+
+  if (loopError) {
+    return (
+      <div style={{
+        position: 'absolute',
+        top: 20,
+        left: 20,
+        right: 20,
+        background: 'rgba(255, 0, 127, 0.95)',
+        border: '2px solid #ff007f',
+        boxShadow: '0 0 30px rgba(255, 0, 127, 0.6)',
+        color: '#fff',
+        padding: '24px',
+        borderRadius: '8px',
+        fontFamily: 'monospace',
+        zIndex: 99999,
+        maxHeight: '80vh',
+        overflow: 'auto'
+      }}>
+        <h3 style={{ margin: '0 0 12px 0', fontSize: '1.2rem', color: '#ffb800' }}>🚨 Ship Simulation Loop Error:</h3>
+        <pre style={{ whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.4)', padding: '12px', borderRadius: '4px', fontSize: '0.85rem' }}>{loopError}</pre>
+        <button 
+          onClick={() => { setLoopError(null); window.location.reload(); }} 
+          style={{ 
+            marginTop: '15px', 
+            padding: '8px 16px', 
+            cursor: 'pointer',
+            background: '#ffb800',
+            border: 'none',
+            borderRadius: '4px',
+            color: '#000',
+            fontWeight: 'bold'
+          }}
+        >
+          Reload Game
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="ship-viewport" style={{ width: '100%', height: '100%', position: 'relative' }}>
