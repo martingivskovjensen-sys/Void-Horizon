@@ -1,0 +1,8 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Static site — publish the Vite build output in dist/
+services:
+  - type: web
+    name: game
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
