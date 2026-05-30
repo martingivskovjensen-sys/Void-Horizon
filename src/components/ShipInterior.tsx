@@ -17,6 +17,26 @@ const CLIMB_SPEED = 3.5;
 const TERMINAL_INTERACT_RANGE = 60;
 const LADDER_INTERACT_RANGE = 20;
 
+// Helper function to safely draw rounded rectangles in all browsers
+const safeRoundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
+  const radius = Math.max(0, Math.floor(r));
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, radius);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+};
+
 // ─── ROOMS / STATIONS ─────────────────────────────────────────────────────
 
 interface RoomDef {
@@ -191,10 +211,8 @@ export const ShipInterior: React.FC = () => {
   }
 
   function drawEngineFire(ctx: CanvasRenderingContext2D, f: number) {
-    // Pulsing exhaust glow at the bottom center of the rocket (Deck 1 base is between X=400 and X=800)
     const baseMinX = 420;
     const baseMaxX = 780;
-    const baseWidth = baseMaxX - baseMinX;
 
     // Draw main rocket exhaust cone
     ctx.fillStyle = '#1e1e24';
@@ -450,7 +468,7 @@ export const ShipInterior: React.FC = () => {
     ctx.lineWidth = isNear ? 2 : 1;
 
     ctx.beginPath();
-    ctx.roundRect(tx - 18, ty - 18, 36, 40, 3);
+    safeRoundRect(ctx, tx - 18, ty - 18, 36, 40, 3);
     ctx.fill();
     ctx.stroke();
 
@@ -494,7 +512,7 @@ export const ShipInterior: React.FC = () => {
       ctx.translate(-sx, 0);
     }
 
-    // Robot ambient floor shadow
+    // Robot shadow on floor
     ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
     ctx.beginPath();
     ctx.ellipse(sx, ry + 2, 16, 4, 0, 0, Math.PI * 2);
@@ -522,7 +540,7 @@ export const ShipInterior: React.FC = () => {
     bodyGrad.addColorStop(1, '#433c4f');
     ctx.fillStyle = bodyGrad;
     ctx.beginPath();
-    ctx.roundRect(sx - 12, bodyY + 6, 24, 26, 3);
+    safeRoundRect(ctx, sx - 12, bodyY + 6, 24, 26, 3);
     ctx.fill();
 
     ctx.strokeStyle = 'rgba(0, 242, 254, 0.25)';
@@ -533,7 +551,7 @@ export const ShipInterior: React.FC = () => {
     const energy = 0.7 + Math.sin(f * 0.08) * 0.3;
     ctx.fillStyle = `rgba(0, 242, 254, ${energy})`;
     ctx.beginPath();
-    ctx.roundRect(sx - 7, bodyY + 10, 14, 5, 1.5);
+    safeRoundRect(ctx, sx - 7, bodyY + 10, 14, 5, 1);
     ctx.fill();
 
     ctx.shadowColor = '#00f2fe';
@@ -572,7 +590,7 @@ export const ShipInterior: React.FC = () => {
   }
 
   function drawSparks(ctx: CanvasRenderingContext2D) {
-    smokeParticlesRef.current.forEach((p, idx) => {
+    smokeParticlesRef.current.forEach(p => {
       p.x += p.vx;
       p.y += p.vy;
       p.life++;
@@ -596,7 +614,7 @@ export const ShipInterior: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Rescale Dpr Helper
+    // Rescale Dpr Helper based on parent dimensions to prevent squishing
     const resize = () => {
       const parent = canvas.parentElement;
       if (!parent) return;
@@ -618,8 +636,21 @@ export const ShipInterior: React.FC = () => {
         return;
       }
 
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
+      const parent = canvas.parentElement;
+      if (!parent) {
+        animFrameId.current = requestAnimationFrame(run);
+        return;
+      }
+
+      const w = parent.clientWidth;
+      const h = parent.clientHeight;
+
+      // Skip frame if not laid out yet to prevent canvas scaling to 0
+      if (w === 0 || h === 0) {
+        animFrameId.current = requestAnimationFrame(run);
+        return;
+      }
+
       const scaleFactor = Math.min(w / CANVAS_WIDTH, h / CANVAS_HEIGHT);
 
       frameRef.current++;
@@ -708,7 +739,6 @@ export const ShipInterior: React.FC = () => {
 
       // Apply uniform layout scaling so the full rocket fits beautifully inside the viewport
       ctx.save();
-      // Center the rocket inside the available canvas client space
       const offsetX = (w - CANVAS_WIDTH * scaleFactor) / 2;
       const offsetY = (h - CANVAS_HEIGHT * scaleFactor) / 2;
       ctx.translate(offsetX, offsetY);
@@ -789,7 +819,7 @@ export const ShipInterior: React.FC = () => {
   // ─── RENDER DOM ─────────────────────────────────────────────────────
 
   return (
-    <div className="ship-viewport" style={{ width: '100%', height: '100%', overflow: 'hidden' }}>
+    <div className="ship-viewport">
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}
@@ -805,7 +835,7 @@ export const ShipInterior: React.FC = () => {
         boxShadow: '0 4px 12px rgba(0,0,0,0.6)', pointerEvents: 'none'
       }}>
         <span><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>A</kbd><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>D</kbd> or <kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>←</kbd><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>→</kbd> Move</span>
-        <span><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>W</kbd><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>S</kbd> or <kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>↑</kbd><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>↓</kbd> Climb Ladders</span>
+        <span><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>W</kbd><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>S</kbd> or <kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>↑</kbd><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>↓</kbd> Climb</span>
         <span><kbd style={{ background: '#2e253c', padding: '2px 6px', border: '1px solid #5c4e72', borderRadius: '3px', margin: '0 2px' }}>E</kbd> Interact</span>
       </div>
     </div>
