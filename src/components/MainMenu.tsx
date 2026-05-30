@@ -26,6 +26,26 @@ export const MainMenu: React.FC = () => {
 
   const [saveString, setSaveString] = useState('');
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'fail'>('idle');
+  const [hasSave, setHasSave] = useState(false);
+
+  // Check if save exists reactively when state changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('void_horizon_save_v1');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.credits !== undefined) {
+            setHasSave(true);
+            return;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+      setHasSave(false);
+    }
+  }, [state]);
 
   // Solar system animation
   useEffect(() => {
@@ -372,20 +392,56 @@ export const MainMenu: React.FC = () => {
             {/* Buttons Controls */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', margin: '30px 0' }}>
               
-              <button
-                onClick={() => setMainMenuActive(false)}
-                className="btn"
-                style={{
-                  padding: '14px',
-                  fontSize: '1.25rem',
-                  justifyContent: 'center',
-                  boxShadow: 'var(--shadow-glow-cyan)',
-                  borderColor: 'var(--color-cyan)',
-                  animation: 'pulse-cyan 2.5s infinite'
-                }}
-              >
-                🚀 BOOT STATION CORE [SOLO]
-              </button>
+              {hasSave ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <button
+                    onClick={() => setMainMenuActive(false)}
+                    className="btn"
+                    style={{
+                      padding: '14px',
+                      fontSize: '1.25rem',
+                      justifyContent: 'center',
+                      boxShadow: 'var(--shadow-glow-cyan)',
+                      borderColor: 'var(--color-cyan)',
+                      animation: 'pulse-cyan 2.5s infinite'
+                    }}
+                  >
+                    🚀 RESUME MISSION [SOLO]
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm('Purging your save-state deletes all credits, upgrades, and progression. Continue?')) {
+                        localStorage.removeItem('void_horizon_save_v1');
+                        window.location.reload(); // Hard reset to initial state
+                      }
+                    }}
+                    className="btn btn-pink"
+                    style={{
+                      padding: '10px',
+                      fontSize: '0.95rem',
+                      justifyContent: 'center',
+                      borderColor: 'rgba(255,0,127,0.4)',
+                    }}
+                  >
+                    🆕 START NEW CAMPAIGN [WIPE]
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setMainMenuActive(false)}
+                  className="btn"
+                  style={{
+                    padding: '14px',
+                    fontSize: '1.25rem',
+                    justifyContent: 'center',
+                    boxShadow: 'var(--shadow-glow-cyan)',
+                    borderColor: 'var(--color-cyan)',
+                    animation: 'pulse-cyan 2.5s infinite'
+                  }}
+                >
+                  🚀 BOOT STATION CORE [SOLO]
+                </button>
+              )}
 
               <button
                 onClick={() => setMenuMode('multiplayer')}

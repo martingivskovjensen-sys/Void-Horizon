@@ -186,6 +186,7 @@ const mergeSaveWithDefaults = (saved: Partial<GameState>): GameState => {
     mail: saved.mail?.length ? saved.mail : defaults.mail,
     activePriceModifications: saved.activePriceModifications ?? defaults.activePriceModifications,
     multiplayer: defaults.multiplayer,
+    isMainMenuActive: true,
     activeTerminal: null,
   };
 };
